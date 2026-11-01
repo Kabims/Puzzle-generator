@@ -94,19 +94,6 @@ def cek():
     S.hasil = (sum(benar(s, i) for s, i in S.placed.items()), len(S.placed))
 
 
-def isi_papan_otomatis_solver():
-    """Menjalankan modul puzzle_solver dan langsung menaruh hasilnya ke papan permainan manual."""
-    _, board, _, _ = solve_puzzle(S.frame, S.pot)
-    M = S.kunci["M"]
-    S.placed = {}
-    for (r, c), (i, k) in board.items():
-        slot = r * M + c
-        S.placed[slot] = i
-        S.urot[i] = k
-    S.sel = None
-    cek()
-
-
 def jawaban():
     """Susun ulang dari potongan + kunci jawaban (untuk tombol petunjuk)."""
     h = S.frame.copy()
@@ -145,7 +132,6 @@ with st.sidebar:
     if "kunci" in S:
         st.divider()
         st.subheader("3. Kontrol Papan Permainan")
-        st.button("🤖 Susun Otomatis di Papan", on_click=isi_papan_otomatis_solver, width="stretch")
         st.button("🧹 Bersihkan Papan", on_click=reset_papan, width="stretch")
         petunjuk = st.toggle("Tampilkan jawaban (petunjuk)")
     else:
@@ -258,77 +244,50 @@ with tab_gen:
 
 
 # ------------------------------------------------------------------------------
-# TAB 2: PUZZLE SOLVER OTOMATIS (INPUT: 1 CITRA BINGKAI + N POTONGAN CITRA)
+# TAB 2: PUZZLE SOLVER OTOMATIS (INPUT MANUAL: 1 CITRA BINGKAI + N POTONGAN CITRA)
 # ------------------------------------------------------------------------------
 with tab_solver:
     st.subheader("Tahap 2: Puzzle Solver Otomatis")
     st.markdown(
-        "Modul ini menerima **1 citra bingkai** dan **N potongan citra** (tanpa membaca `kunci_jawaban.json`), "
+        "Modul ini menerima unggahan **1 citra bingkai** dan **N potongan citra**, "
         "mendeteksi area kosong pada bingkai, lalu merangkai kembali seluruh potongan beserta rotasinya "
-        "menggunakan analisis kontinuitas piksel dan gradien tepi (PCD)."
-    )
-
-    sumber_solver = st.radio(
-        "Pilih Sumber Masukan Solver:",
-        [
-            "Gunakan hasil Generator saat ini (1 Bingkai + N Potongan aktif)",
-            "Unggah manual 1 Citra Bingkai + N Potongan Citra dari komputer"
-        ],
-        horizontal=True
+        "menjadi citra utuh menggunakan analisis kontinuitas piksel dan gradien tepi (PCD)."
     )
 
     frame_solver = None
     pieces_solver = []
     nama_pieces_solver = []
 
-    if sumber_solver.startswith("Gunakan hasil Generator"):
-        if "frame" in S and "pot" in S:
-            frame_solver = S.frame
-            pieces_solver = S.pot
-            nama_pieces_solver = [q["file"] for q in S.kunci["potongan"]]
-            st.success(f"Siap menyusun **1 citra bingkai** dan **{len(pieces_solver)} potongan citra** dari hasil Generator.")
-        elif os.path.exists(os.path.join(OUT_DIR, "frame.png")) and os.path.exists(PIECES_DIR):
-            piece_paths = sorted(glob.glob(os.path.join(PIECES_DIR, "piece_*.png")))
-            if piece_paths:
-                frame_solver = np.array(Image.open(os.path.join(OUT_DIR, "frame.png")))
-                pieces_solver = [np.array(Image.open(p)) for p in piece_paths]
-                nama_pieces_solver = [os.path.basename(p) for p in piece_paths]
-                st.success(f"Memuat **1 citra bingkai** dan **{len(pieces_solver)} potongan citra** dari folder `{OUT_DIR}/`.")
-            else:
-                st.warning("Belum ada potongan citra di folder `output/pieces/`. Silakan buat puzzle di Tab 1 atau pilih unggah manual.")
-        else:
-            st.warning("Belum ada puzzle yang dibuat. Silakan unggah gambar di Sidebar atau pilih opsi unggah manual di atas.")
-    else:
-        col_up1, col_up2 = st.columns(2)
-        with col_up1:
-            up_frame = st.file_uploader(
-                "1. Unggah 1 Citra Bingkai (frame.png)",
-                type=["png", "jpg", "jpeg", "bmp", "webp"],
-                key="solver_frame_up"
-            )
-        with col_up2:
-            up_pieces = st.file_uploader(
-                "2. Unggah N Potongan Citra (pilih semua file piece_XX.png)",
-                type=["png", "jpg", "jpeg", "bmp", "webp"],
-                accept_multiple_files=True,
-                key="solver_pieces_up"
-            )
+    col_up1, col_up2 = st.columns(2)
+    with col_up1:
+        up_frame = st.file_uploader(
+            "1. Unggah 1 Citra Bingkai (frame.png)",
+            type=["png", "jpg", "jpeg", "bmp", "webp"],
+            key="solver_frame_up"
+        )
+    with col_up2:
+        up_pieces = st.file_uploader(
+            "2. Unggah N Potongan Citra (pilih semua file piece_XX.png)",
+            type=["png", "jpg", "jpeg", "bmp", "webp"],
+            accept_multiple_files=True,
+            key="solver_pieces_up"
+        )
 
-        if up_frame is not None and up_pieces:
-            img_f = Image.open(up_frame)
-            if img_f.mode not in ("RGB", "L"):
-                img_f = img_f.convert("RGB")
-            frame_solver = np.array(img_f)
+    if up_frame is not None and up_pieces:
+        img_f = Image.open(up_frame)
+        if img_f.mode not in ("RGB", "L"):
+            img_f = img_f.convert("RGB")
+        frame_solver = np.array(img_f)
 
-            up_pieces_sorted = sorted(up_pieces, key=lambda f: f.name)
-            for pf in up_pieces_sorted:
-                im_p = Image.open(pf)
-                if im_p.mode not in ("RGB", "L"):
-                    im_p = im_p.convert("RGB")
-                pieces_solver.append(np.array(im_p))
-                nama_pieces_solver.append(pf.name)
+        up_pieces_sorted = sorted(up_pieces, key=lambda f: f.name)
+        for pf in up_pieces_sorted:
+            im_p = Image.open(pf)
+            if im_p.mode not in ("RGB", "L"):
+                im_p = im_p.convert("RGB")
+            pieces_solver.append(np.array(im_p))
+            nama_pieces_solver.append(pf.name)
 
-            st.info(f"Masukan diterima: **1 Bingkai** (`{up_frame.name}`) dan **{len(pieces_solver)} Potongan Citra**.")
+        st.info(f"Masukan diterima: **1 Bingkai** (`{up_frame.name}`) dan **{len(pieces_solver)} Potongan Citra**.")
 
     if frame_solver is not None and len(pieces_solver) > 0:
         with st.expander("👁️ Lihat Masukan (1 Citra Bingkai & N Potongan)", expanded=False):
