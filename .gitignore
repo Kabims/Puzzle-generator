@@ -1,6 +1,12 @@
-
 __pycache__/
 
 streamlit.log
 
 output/
+
+# berkas bantu dari sesi belajar (tidak ikut git)
+puzzle_solver_asli.py
+puzzle_solver_v2*.py
+tes_langkah*.py
+tes_puzzle_solver*.py
+panduan_puzzle_solver.html
