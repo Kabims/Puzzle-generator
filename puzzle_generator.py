@@ -5,7 +5,6 @@ menjadi M x M potongan, melakukan rotasi/pengacakan opsional, dan menyimpan kelu
 """
 import os
 import glob
-import json
 import random
 import numpy as np
 from PIL import Image
@@ -30,20 +29,15 @@ def potong_grid(arr, M, area):
     for r in range(M):
         for c in range(M):
             p = arr[ys[r]:ys[r + 1], xs[c]:xs[c + 1]].copy()
-            pieces.append(dict(
-                row=r,
-                col=c,
-                img=p,
-                box=(int(xs[c]), int(ys[r]), int(xs[c + 1]), int(ys[r + 1]))
-            ))
+            pieces.append(p)
     return pieces
 
 
 def buat_puzzle(img_pil, M=4, margin_rasio=0.07, rotasi_acak=True, acak_urutan=True, out_dir="output"):
     """
     Memproses citra masukan menjadi bingkai & N potongan puzzle,
-    menyimpan hasilnya ke folder `out_dir`, serta mengembalikan:
-    (arr_asli, frame, pot_list, kunci)
+    menyimpan hasilnya ke folder `out_dir` (tanpa menyimpan kunci jawaban),
+    serta mengembalikan: (arr_asli, frame, pot_list, info)
     """
     if img_pil.mode not in ("RGB", "L"):
         img_pil = img_pil.convert("RGB")
@@ -55,11 +49,10 @@ def buat_puzzle(img_pil, M=4, margin_rasio=0.07, rotasi_acak=True, acak_urutan=T
     frame, area = buat_bingkai(arr, margin_rasio)
     pieces = potong_grid(arr, M, area)
 
-    for p in pieces:
+    for i in range(len(pieces)):
         k = random.randint(0, 3) if rotasi_acak else 0
-        p["rot"] = k * 90
         if k:
-            p["img"] = np.rot90(p["img"], k).copy()
+            pieces[i] = np.rot90(pieces[i], k).copy()
 
     urutan = list(range(N))
     if acak_urutan:
@@ -75,29 +68,23 @@ def buat_puzzle(img_pil, M=4, margin_rasio=0.07, rotasi_acak=True, acak_urutan=T
 
     Image.fromarray(frame).save(os.path.join(out_dir, "frame.png"))
 
-    kunci = {
-        "M": M,
-        "ukuran_asli": [W, H],
-        "mode": img_pil.mode,
-        "area_bingkai": area,
-        "potongan": []
-    }
     pot_list = []
+    nama_files = []
 
     for nomor, idx in enumerate(urutan):
         p = pieces[idx]
         nama = f"piece_{nomor:02d}.png"
-        Image.fromarray(p["img"]).save(os.path.join(pieces_dir, nama))
-        pot_list.append(p["img"])
-        kunci["potongan"].append({
-            "file": nama,
-            "baris_asli": p["row"],
-            "kolom_asli": p["col"],
-            "posisi_di_bingkai_xyxy": p["box"],
-            "rotasi_derajat": p["rot"]
-        })
+        Image.fromarray(p).save(os.path.join(pieces_dir, nama))
+        pot_list.append(p)
+        nama_files.append(nama)
 
-    with open(os.path.join(out_dir, "kunci_jawaban.json"), "w") as f:
-        json.dump(kunci, f, indent=2)
+    info = {
+        "M": M,
+        "ukuran_asli": [W, H],
+        "mode": img_pil.mode,
+        "area_bingkai": area,
+        "nama_files": nama_files,
+    }
 
-    return arr, frame, pot_list, kunci
+    return arr, frame, pot_list, info
+

@@ -1,21 +1,20 @@
 """
 Tampilan Utama (Streamlit UI) - Puzzle World
 Mengimpor modul:
-- puzzle_generator.py (Tahap 1: Pembuat potongan teka-teki)
+- puzzle_generator.py (Tahap 1: Pembuat bingkai & potongan teka-teki)
 - puzzle_solver.py    (Tahap 2: Penyusun kembali potongan menjadi citra utuh)
 """
 import io
 import os
 import sys
-import glob
 import time
+import zipfile
 import subprocess
 import numpy as np
 import streamlit as st
 from PIL import Image
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
-# Jika dijalankan langsung dengan tombol Run (python app.py), otomatis alihkan ke `streamlit run`
 if __name__ == "__main__" and get_script_run_ctx(suppress_warning=True) is None:
     subprocess.run([sys.executable, "-m", "streamlit", "run", os.path.abspath(__file__)])
     sys.exit(0)
@@ -31,11 +30,11 @@ S = st.session_state
 
 
 # ==============================================================================
-# FUNGSI AKSI & STATE PERMAINAN
+# FUNGSI PEMANGGIL GENERATOR
 # ==============================================================================
 def jalankan_generator(img_pil, M, margin_rasio, rotasi_acak, acak_urutan):
-    """Memanggil modul puzzle_generator dan menyimpan state ke aplikasi."""
-    arr, frame, pot_list, kunci = buat_puzzle(
+    """Memanggil modul puzzle_generator dan menyimpan state beserta file unduhan ke aplikasi."""
+    arr, frame, pot_list, info = buat_puzzle(
         img_pil=img_pil,
         M=M,
         margin_rasio=margin_rasio,
@@ -46,61 +45,21 @@ def jalankan_generator(img_pil, M, margin_rasio, rotasi_acak, acak_urutan):
     S.asli = arr
     S.frame = frame
     S.pot = pot_list
-    S.kunci = kunci
-    S.solver_result = None
-    reset_papan()
+    S.info = info
 
+    # Siapkan buffer ZIP paket lengkap (frame.png + pieces/piece_XX.png)
+    buf_frame = io.BytesIO()
+    Image.fromarray(frame).save(buf_frame, format="PNG")
 
-def reset_papan():
-    """Mengosongkan papan permainan tanpa memotong ulang gambar."""
-    S.placed = {}
-    S.urot = {i: 0 for i in range(len(S.pot))}
-    S.sel = None
-    S.hasil = None
+    buf_all_zip = io.BytesIO()
+    with zipfile.ZipFile(buf_all_zip, "w", zipfile.ZIP_DEFLATED) as za:
+        za.writestr("frame.png", buf_frame.getvalue())
+        for pot, nama in zip(pot_list, info["nama_files"]):
+            b_pot = io.BytesIO()
+            Image.fromarray(pot).save(b_pot, format="PNG")
+            za.writestr(f"pieces/{nama}", b_pot.getvalue())
 
-
-def pilih(i):
-    S.sel = i
-
-
-def putar(i):
-    S.urot[i] = (S.urot[i] + 1) % 4
-
-
-def taruh(slot):
-    if S.sel is not None:
-        S.placed[slot] = S.sel
-        S.sel = None
-        S.hasil = None
-
-
-def ambil(slot):
-    S.sel = S.placed.pop(slot)
-    S.hasil = None
-
-
-def tampil(i):
-    return np.rot90(S.pot[i], S.urot[i])
-
-
-def benar(slot, i):
-    """Pengecekan permainan manual: hanya mengecek kebenaran posisi slot."""
-    M = S.kunci["M"]
-    q = S.kunci["potongan"][i]
-    return q["baris_asli"] * M + q["kolom_asli"] == slot
-
-
-def cek():
-    S.hasil = (sum(benar(s, i) for s, i in S.placed.items()), len(S.placed))
-
-
-def jawaban():
-    """Susun ulang dari potongan + kunci jawaban (untuk tombol petunjuk)."""
-    h = S.frame.copy()
-    for q, p in zip(S.kunci["potongan"], S.pot):
-        x0, y0, x1, y1 = q["posisi_di_bingkai_xyxy"]
-        h[y0:y1, x0:x1] = np.rot90(p, -(q["rotasi_derajat"] // 90))
-    return h
+    S.all_zip_bytes = buf_all_zip.getvalue()
 
 
 # ==============================================================================
@@ -126,16 +85,8 @@ with st.sidebar:
     tombol_acak_ulang = st.button(
         "🔀 Buat / Acak Ulang Puzzle",
         disabled=uploaded_file is None,
-        width="stretch"
+        use_container_width=True
     )
-
-    if "kunci" in S:
-        st.divider()
-        st.subheader("3. Kontrol Papan Permainan")
-        st.button("🧹 Bersihkan Papan", on_click=reset_papan, width="stretch")
-        petunjuk = st.toggle("Tampilkan jawaban (petunjuk)")
-    else:
-        petunjuk = False
 
 
 # Jalankan Generator HANYA saat gambar/parameter berubah atau tombol acak ulang diklik
@@ -148,99 +99,58 @@ if uploaded_file is not None:
 
 
 # ==============================================================================
-# LAYAR UTAMA: 2 TAB (TAHAP 1: GENERATOR & PERMAINAN | TAHAP 2: PUZZLE SOLVER)
+# LAYAR UTAMA: 2 TAB (TAHAP 1: PUZZLE GENERATOR | TAHAP 2: PUZZLE SOLVER)
 # ==============================================================================
 st.header("🧩 Puzzle World — Generator & Solver (PCD)")
 
 tab_gen, tab_solver = st.tabs([
-    "🛠️ Tahap 1: Puzzle Generator & Permainan Manual",
+    "🛠️ Tahap 1: Puzzle Generator",
     "🤖 Tahap 2: Puzzle Solver Otomatis (1 Bingkai + N Potongan)"
 ])
 
 # ------------------------------------------------------------------------------
-# TAB 1: PUZZLE GENERATOR & PERMAINAN MANUAL
+# TAB 1: PUZZLE GENERATOR
 # ------------------------------------------------------------------------------
 with tab_gen:
-    if "kunci" not in S:
+    if "info" not in S:
         st.info(
             "👈 Silakan unggah gambar utuh pada sidebar di sebelah kiri untuk membuat bingkai & potongan puzzle, "
             "atau buka tab **🤖 Tahap 2: Puzzle Solver Otomatis** jika Anda ingin langsung mengunggah 1 bingkai dan N potongan."
         )
     else:
-        kunci = S.kunci
-        M = kunci["M"]
+        info = S.info
+        M = info["M"]
         N = M * M
-        W, H = kunci["ukuran_asli"]
+        W, H = info["ukuran_asli"]
 
+        st.success(
+            f"✅ Puzzle berhasil dibuat! Bingkai disimpan di `{OUT_DIR}/frame.png` dan **{N} potongan** disimpan di `{PIECES_DIR}/`."
+        )
         st.caption(
-            f"Ukuran citra: **{W} × {H} px** | Mode: **{kunci.get('mode', 'RGB')}** | "
-            f"Grid: **{M} × {M} ({N} potongan)** | Keluaran disimpan di: `{OUT_DIR}/`"
+            f"Ukuran citra: **{W} × {H} px** | Mode: **{info.get('mode', 'RGB')}** | "
+            f"Grid: **{M} × {M} ({N} potongan)**"
+        )
+
+        st.download_button(
+            label="🗂️ Unduh Hasil Generator (Bingkai + Potongan .zip)",
+            data=S.all_zip_bytes,
+            file_name="puzzle_output.zip",
+            mime="application/zip",
+            use_container_width=True
         )
 
         kiri, kanan = st.columns([1, 1.3])
 
         with kiri:
-            st.subheader("Bingkai")
-            st.image(S.frame, width="stretch")
-            if petunjuk:
-                st.image(jawaban(), caption="Susunan yang benar", width="stretch")
-
-            st.subheader("Potongan tersedia")
-            sisa = [i for i in range(N) if i not in S.placed.values()]
-            if not sisa:
-                st.caption("Semua potongan sudah ditaruh di papan.")
-            kol = st.columns(min(4, max(1, len(sisa))))
-            for n, i in enumerate(sisa):
-                with kol[n % len(kol)]:
-                    st.image(
-                        tampil(i),
-                        caption=("✅ " if S.sel == i else "") + kunci["potongan"][i]["file"],
-                        width="stretch"
-                    )
-                    st.button("Pilih", key=f"p{i}", on_click=pilih, args=(i,), width="stretch")
-                    if S.sel == i:
-                        st.button("↺ Putar", key=f"r{i}", on_click=putar, args=(i,), width="stretch")
+            st.subheader("Citra Bingkai (frame.png)")
+            st.image(S.frame, caption=f"{OUT_DIR}/frame.png", use_container_width=True)
 
         with kanan:
-            st.subheader("Papan puzzle")
-            if S.sel is not None:
-                st.info(f"**{kunci['potongan'][S.sel]['file']}** dipilih. Klik **Taruh** pada slot tujuan.")
-
-            area = kunci["area_bingkai"]
-            slot_h = max(1, (area["y1"] - area["y0"]) // M)
-            slot_w = max(1, (area["x1"] - area["x0"]) // M)
-            kosong = np.full((slot_h, slot_w, 3), 235, np.uint8)
-
-            for r in range(M):
-                cols = st.columns(M)
-                for c in range(M):
-                    slot = r * M + c
-                    with cols[c]:
-                        if slot in S.placed:
-                            i = S.placed[slot]
-                            st.image(tampil(i), width="stretch")
-                            if S.hasil is not None:
-                                st.caption("✅" if benar(slot, i) else "❌")
-                            st.button("Ambil", key=f"a{slot}", on_click=ambil, args=(slot,), width="stretch")
-                        else:
-                            st.image(kosong, caption=f"slot {slot + 1}", width="stretch")
-                            st.button(
-                                "Taruh",
-                                key=f"t{slot}",
-                                on_click=taruh,
-                                args=(slot,),
-                                disabled=S.sel is None,
-                                width="stretch"
-                            )
-
-            st.button("✔️ Cek jawaban (Posisi)", on_click=cek, disabled=not S.placed, width="stretch")
-            if S.hasil:
-                n, total = S.hasil
-                if n == N:
-                    st.success("🎉 Puzzle selesai, semua potongan berada di posisi yang benar!")
-                    st.balloons()
-                else:
-                    st.warning(f"{n} dari {total} potongan yang ditaruh sudah benar posisinya (target {N}).")
+            st.subheader(f"Hasil Potongan Puzzle ({N} Potongan)")
+            kol = st.columns(min(4, max(1, M)))
+            for i, (pot, nama) in enumerate(zip(S.pot, info["nama_files"])):
+                with kol[i % len(kol)]:
+                    st.image(pot, caption=nama, use_container_width=True)
 
 
 # ------------------------------------------------------------------------------
@@ -293,15 +203,15 @@ with tab_solver:
         with st.expander("👁️ Lihat Masukan (1 Citra Bingkai & N Potongan)", expanded=False):
             c_in1, c_in2 = st.columns([1, 1.5])
             with c_in1:
-                st.image(frame_solver, caption="Citra Bingkai Masukan", width="stretch")
+                st.image(frame_solver, caption="Citra Bingkai Masukan", use_container_width=True)
             with c_in2:
                 n_p = len(pieces_solver)
                 cols_p = st.columns(min(6, max(1, n_p)))
                 for idx_p, (im_p, nm_p) in enumerate(zip(pieces_solver, nama_pieces_solver)):
                     with cols_p[idx_p % len(cols_p)]:
-                        st.image(im_p, caption=nm_p, width="stretch")
+                        st.image(im_p, caption=nm_p, use_container_width=True)
 
-        if st.button("🚀 Jalankan Puzzle Solver (Rangkai Citra Utuh)", type="primary", width="stretch"):
+        if st.button("🚀 Jalankan Puzzle Solver (Rangkai Citra Utuh)", type="primary", use_container_width=True):
             try:
                 t_mulai = time.time()
                 with st.spinner("Menganalisis tepi piksel & merangkai potongan puzzle..."):
@@ -335,10 +245,10 @@ with tab_solver:
         col_out1, col_out2 = st.columns(2)
         with col_out1:
             st.subheader("Input: Citra Bingkai")
-            st.image(res["frame"], caption="1 Citra Bingkai + Area Kosong", width="stretch")
+            st.image(res["frame"], caption="1 Citra Bingkai + Area Kosong", use_container_width=True)
         with col_out2:
             st.subheader("Luaran: Citra Utuh Hasil Rangkaian")
-            st.image(res["hasil"], caption="Citra Utuh Hasil Puzzle Solver (output/solved.png)", width="stretch")
+            st.image(res["hasil"], caption="Citra Utuh Hasil Puzzle Solver (output/solved.png)", use_container_width=True)
 
         buf = io.BytesIO()
         Image.fromarray(res["hasil"]).save(buf, format="PNG")
@@ -347,7 +257,7 @@ with tab_solver:
             data=buf.getvalue(),
             file_name="solved.png",
             mime="image/png",
-            width="stretch"
+            use_container_width=True
         )
 
         with st.expander("📋 Detail Penempatan & Rotasi Setiap Slot", expanded=False):
