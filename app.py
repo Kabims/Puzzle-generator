@@ -34,7 +34,7 @@ S = st.session_state
 # ==============================================================================
 def jalankan_generator(img_pil, M, margin_rasio, rotasi_acak, acak_urutan):
     """Memanggil modul puzzle_generator dan menyimpan state beserta file unduhan ke aplikasi."""
-    arr, frame, pot_list, info = buat_puzzle(
+    frame, pot_list, info = buat_puzzle(
         img_pil=img_pil,
         M=M,
         margin_rasio=margin_rasio,
@@ -42,7 +42,6 @@ def jalankan_generator(img_pil, M, margin_rasio, rotasi_acak, acak_urutan):
         acak_urutan=acak_urutan,
         out_dir=OUT_DIR
     )
-    S.asli = arr
     S.frame = frame
     S.pot = pot_list
     S.info = info
