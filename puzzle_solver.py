@@ -1,20 +1,44 @@
-"""
-Modul 2: Puzzle Solver Otomatis (Berbasis Pengolahan Citra Digital)
-Bertugas merangkai 1 citra bingkai dan N potongan citra menjadi sebuah gambar utuh
-tanpa bergantung pada kunci_jawaban.json.
-"""
 import numpy as np
 
+def ekstrak_tepi_potongan(img):
+    "Fungsi ini dipake untuk ekstrak 4 tepi luar dan 4 tepi dalam pada N potongan gambar input"
+    return {
+        "top": (img[0,:], img[1,:]),
+        "bottom": (img[-1,:], img[-2,:]),
+        "left": (img[:,0], img[:,1]),
+        "right": (img[:,-1], img[:,-2])
+    }
+
+def biaya_tepi(e1, e1_in, e2, e2_in):
+    if e1.shape != e2.shape:
+        return 1e6
+
+    e1 = e1.astype(np.float32)
+    e1_in = e1_in.astype(np.float32)
+    e2 = e2.astype(np.float32)
+    e2_in = e2_in.astype(np.float32)
+
+    diff_color = np.average(np.abs(e1 - e2))
+
+    pred_e2 = np.clip(2*e1 - e1_in, 0, 255)
+    pred_e1 = np.clip(2*e2 - e2_in, 0, 255)
+    diff_grad_norm = 0.5*(np.average(np.abs(e2 - pred_e2)) + np.average(np.abs(e1 - pred_e1)))
+
+    if e1.shape[0] > 1:
+        tan1 = e1[1:] - e1[:-1]
+        tan2 = e2[1:] - e2[:-1]
+        diff_grad_tan = np.average(np.abs(tan1-tan2))
+    else:
+        diff_grad_tan = 0.0
+
+    return float(1.0 * diff_color + 0.6 * diff_grad_norm + 0.5 * diff_grad_tan)
 
 def deteksi_area_bingkai(frame, pieces):
-    """
-    Mendeteksi koordinat area kosong (x0, y0, x1, y1) pada bingkai
-    hanya berbekal citra bingkai dan kumpulan potongan.
-    """
     H, W = frame.shape[:2]
-    total_area = sum(p.shape[0] * p.shape[1] for p in pieces)
+    total_area = 0
+    for p in pieces:
+        total_area += p.shape[0] * p.shape[1]
 
-    # 1. Cari area putih (255) simetris yang luas pikselnya sama persis dengan jumlah luas N potongan
     kandidat = []
     for my in range(1, H // 2):
         h_hole = H - 2 * my
@@ -33,7 +57,6 @@ def deteksi_area_bingkai(frame, pieces):
         kandidat.sort(key=lambda x: x[0])
         return kandidat[0][1]
 
-    # 2. Fallback: ekspansi area putih dari titik tengah bingkai
     is_white = np.all(frame == 255, axis=-1) if frame.ndim == 3 else (frame == 255)
     cy, cx = H // 2, W // 2
     y0, y1 = cy, cy
@@ -48,79 +71,25 @@ def deteksi_area_bingkai(frame, pieces):
         x1 += 1
     return dict(x0=int(x0), y0=int(y0), x1=int(x1), y1=int(y1))
 
-
-def biaya_tepi(e1, e1_in, e2, e2_in):
-    """
-    Mengukur ketidakcocokan (dissimilarity) antara dua tepi citra menggunakan 3 fitur PCD:
-    1. Kontinuitas Warna/Intensitas Piksel Langsung (L1 Distance)
-    2. Kontinuitas Gradien Normal (Ekstrapolasi Turunan Orde-1 Lintas Batas)
-    3. Kemiripan Profil Gradien Tangensial (Kontur Sepanjang Tepi Batas)
-    """
-    if e1.shape != e2.shape:
-        return 1e6
-    e1 = e1.astype(np.float32)
-    e1_in = e1_in.astype(np.float32)
-    e2 = e2.astype(np.float32)
-    e2_in = e2_in.astype(np.float32)
-
-    # 1. Selisih nilai piksel langsung di perbatasan
-    diff_color = np.mean(np.abs(e1 - e2))
-
-    # 2. Ekstrapolasi gradien normal: memprediksi piksel seberang dari kemiringan lokal
-    pred_e2 = np.clip(2.0 * e1 - e1_in, 0.0, 255.0)
-    pred_e1 = np.clip(2.0 * e2 - e2_in, 0.0, 255.0)
-    diff_grad_norm = 0.5 * (np.mean(np.abs(e2 - pred_e2)) + np.mean(np.abs(e1 - pred_e1)))
-
-    # 3. Selisih turunan tangensial sepanjang garis batas
-    if e1.shape[0] > 1:
-        tan1 = e1[1:] - e1[:-1]
-        tan2 = e2[1:] - e2[:-1]
-        diff_grad_tan = np.mean(np.abs(tan1 - tan2))
-    else:
-        diff_grad_tan = 0.0
-
-    return float(1.0 * diff_color + 0.6 * diff_grad_norm + 0.5 * diff_grad_tan)
-
-
-def ekstrak_tepi_potongan(img):
-    """Mengekstrak 4 sisi tepi (top, bottom, left, right) beserta baris/kolom piksel dalamnya."""
-    return {
-        "top":    (img[0, :],  img[min(1, img.shape[0] - 1), :]),
-        "bottom": (img[-1, :], img[max(0, img.shape[0] - 2), :]),
-        "left":   (img[:, 0],  img[:, min(1, img.shape[1] - 1)]),
-        "right":  (img[:, -1], img[:, max(0, img.shape[1] - 2)]),
-    }
-
-
 def solve_puzzle(frame, pieces):
-    """
-    Merangkai 1 citra bingkai dan N potongan citra menjadi gambar utuh secara otomatis.
-    Mendukung potongan yang telah diacak urutannya maupun dirotasi (0/90/180/270 derajat).
-    Mengembalikan: (hasil_citra, board, detail_susunan, area)
-    """
     N = len(pieces)
-    M = int(round(np.sqrt(N)))
-    if M * M != N:
-        raise ValueError(
-            f"Jumlah potongan ({N}) harus merupakan bilangan kuadrat sempurna (M × M), misal 4, 9, 16, 25."
-        )
-
+    M = int(np.sqrt(N))
+    if M**2 != N:
+        raise ValueError(f"Jumlah potongan ({N}) harus merupakan bilangan kuadrat sempurna (M × M), misal 4, 9, 16, 25.")
     area = deteksi_area_bingkai(frame, pieces)
-    x0, y0, x1, y1 = area["x0"], area["y0"], area["x1"], area["y1"]
+    x0, y0, x1, y1 = area['x0'], area['y0'], area['x1'], area['y1']
 
     ys = np.linspace(y0, y1, M + 1).astype(int)
     xs = np.linspace(x0, x1, M + 1).astype(int)
 
-    # Siapkan 4 kemungkinan orientasi rotasi (0, 90, 180, 270 CCW) untuk setiap potongan
     rot_imgs = {}
     rot_edges = {}
     for i, p in enumerate(pieces):
         for k in range(4):
-            im = np.rot90(p, k) if k else p
+            im = np.rot90(p, k=k)
             rot_imgs[(i, k)] = im
-            rot_edges[(i, k)] = ekstrak_tepi_potongan(im)
+            rot_edges[(i, k)] = ekstrak_tepi_potongan(rot_imgs[(i, k)])
 
-    # Ekstrak tepi dalam dari bingkai sebagai acuan slot pinggir
     frame_edges = {}
     for r in range(M):
         for c in range(M):
@@ -188,7 +157,6 @@ def solve_puzzle(frame, pieces):
             return float("inf"), 0
         return total / cnt, cnt
 
-    # Fase 1: Best-First Priority Greedy dari pinggir bingkai menuju ke tengah
     board = {}
     terpakai = set()
 
@@ -222,7 +190,6 @@ def solve_puzzle(frame, pieces):
         board[(br, bc)] = (bi, bk)
         terpakai.add(bi)
 
-    # Fase 2: Global Refinement (2-Opt Swap & Optimasi Rotasi)
     def total_global_cost(b):
         total = 0.0
         for r in range(M):
@@ -285,7 +252,6 @@ def solve_puzzle(frame, pieces):
                     board[s1] = (i1, k1)
                     board[s2] = (i2, k2)
 
-    # Rangkai menjadi citra utuh
     hasil_citra = frame.copy()
     detail_susunan = []
     for r in range(M):
